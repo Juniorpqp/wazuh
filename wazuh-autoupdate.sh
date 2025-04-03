@@ -14,6 +14,11 @@ echo " \$$      \$$ \$$   \$$ \$$$$$$$$  \$$$$$$  \$$   \$$"
 echo " "
 echo "               Wazuh Security Monitoring            "
 echo " "
+echo " "
+echo ""
+apt-get install gnupg apt-transport-https
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
+echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
 
 # Function to get the installed version of a package
 get_installed_version() {
@@ -35,13 +40,16 @@ while [[ -z "$WAZUH_USER" ]]; do
     read -p "Enter Wazuh Admin Username: " WAZUH_USER
 done
 
+stty -echo
 read -s -p "Enter Wazuh Admin Password: " WAZUH_PASS
 echo ""
 while [[ -z "$WAZUH_PASS" ]]; do
-    echo "Password cannot be empty!"
+    echo "❌ Password cannot be empty!"
     read -s -p "Enter Wazuh Admin Password: " WAZUH_PASS
     echo ""
 done
+stty echo
+
 
 # Enable Wazuh repository if file exists
 if [[ -f /etc/apt/sources.list.d/wazuh.list ]]; then
@@ -105,48 +113,97 @@ if [[ "$confirm" != "yes" ]]; then
 fi
 
 echo "🚀 Starting upgrade process..."
+echo ""
+echo ""
+echo "🛑 Stopping Filebeat and Dashboard..."
+systemctl stop filebeat
+systemctl stop wazuh-dashboard
 
 # Prepare cluster for upgrade
 echo "🔄 Preparing cluster..."
-curl -X PUT "https://$WAZUH_IP:9200/_cluster/settings" -u "$WAZUH_USER:$WAZUH_PASS" -k -H "Content-Type: application/json" -d '
+echo ""
+curl -X PUT "https://$WAZUH_IP:9200/_cluster/settings" -u $WAZUH_USER:$WAZUH_PASS -k -H "Content-Type: application/json" -d '
 {
    "persistent": {
       "cluster.routing.allocation.enable": "primaries"
    }
 }'
+echo ""
+curl -X POST "https://$WAZUH_IP:9200/_flush" -u $WAZUH_USER:$WAZUH_PASS -k
 
-curl -X POST "https://$WAZUH_IP:9200/_flush" -u "$WAZUH_USER:$WAZUH_PASS" -k
 
 echo "🛑 Stopping Wazuh services..."
 systemctl stop wazuh-manager
+echo ""
+curl -k -u $WAZUH_USER:$WAZUH_PASS https://$WAZUH_IP:9200/_cat/nodes?v
+
+
 systemctl stop wazuh-indexer
 
 echo "📦 Installing new Wazuh Indexer version..."
+echo ""
 apt-get install -y wazuh-indexer
 
 echo "✅ Restarting Wazuh Indexer..."
+echo ""
 systemctl daemon-reload
 systemctl enable wazuh-indexer
 systemctl start wazuh-indexer
 
+
+# Checking Indexer
+curl -k -u $WAZUH_USER:$WAZUH_PASS https://$WAZUH_IP:9200/_cat/nodes?v
+echo ""
+echo "🔄 Re-enable shard allocation"
+echo ""
+curl -X PUT "https://$WAZUH_IP:9200/_cluster/settings" \
+-u $WAZUH_USER:$WAZUH_PASS -k -H "Content-Type: application/json" -d '
+{
+   "persistent": {
+      "cluster.routing.allocation.enable": "all"
+   }
+}
+'
+echo ""
+echo ""
+curl -k -u $WAZUH_USER:$WAZUH_PASS https://$WAZUH_IP:9200/_cat/nodes?v
+echo ""
+echo ""
+systemctl start wazuh-manager
+
+
 # Upgrade Wazuh Manager
 echo "🔄 Upgrading Wazuh Manager..."
 apt-get install -y wazuh-manager
-
+echo ""
 # Upgrade Filebeat
 echo "🔄 Configuring Filebeat..."
 curl -s https://packages.wazuh.com/4.x/filebeat/wazuh-filebeat-0.4.tar.gz | sudo tar -xvz -C /usr/share/filebeat/module
 curl -so /etc/filebeat/wazuh-template.json https://raw.githubusercontent.com/wazuh/wazuh/v4.11.1/extensions/elasticsearch/7.x/wazuh-template.json
 chmod go+r /etc/filebeat/wazuh-template.json
-systemctl restart filebeat
+echo ""
+echo ""
+
+systemctl daemon-reload
+systemctl enable filebeat
+systemctl start filebeat
+
+filebeat setup --pipelines
+filebeat setup --index-management -E output.logstash.enabled=false
 
 # Upgrade Wazuh Dashboard
 echo "🔄 Upgrading Wazuh Dashboard..."
+echo ""
 apt-get install -y wazuh-dashboard
-systemctl restart wazuh-dashboard
+echo ""
+systemctl daemon-reload
+systemctl enable wazuh-dashboard
+systemctl start wazuh-dashboard
+
 
 # Show final versions
 echo "✅ Upgrade complete! Installed versions:"
+echo ""
 apt list --installed wazuh-indexer
 apt list --installed wazuh-manager
 apt list --installed wazuh-dashboard
@@ -158,7 +215,3 @@ if [[ -f /etc/apt/sources.list.d/wazuh.list ]]; then
 fi
 
 echo "🎉 Wazuh upgrade process finished!"
-echo " ....."
-echo "Script based to automate the process described in the documentation"
-echo "https://documentation.wazuh.com/current/upgrade-guide/upgrading-central-components.html"
-echo " ....."
