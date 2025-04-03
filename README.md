@@ -53,15 +53,7 @@ After the upgrade is completed, the script will display the installed versions o
 - Verify that your Wazuh repository is correctly configured.
 ```
 
-## License
-```
-This project is licensed under the MIT License.
-```
-
-## Contribution
-```
-Feel free to contribute to this project by submitting issues and pull requests on GitHub.
-```
+https://documentation.wazuh.com/current/upgrade-guide/upgrading-central-components.html
 
 ---
 🎉 Enjoy a seamless Wazuh upgrade experience!
